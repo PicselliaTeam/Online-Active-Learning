@@ -44,9 +44,15 @@ def start_training(id, init):
     path = "../assets/annotations/"+str(id)
 
     no = len(os.listdir(path))-1
+    
+    if no != 0:
+        old_path = os.path.join(path, str(no-1))+'.json'
+        new_path = os.path.join(path, str(no))+'.json'
+        dict_annotations = get_diff(old_path, new_path)
 
-    with open(os.path.join(path, str(no))+'.json', 'r') as f:
-        dict_annotations = json.load(f)
+    else:
+        with open(os.path.join(path, str(no))+'.json', 'r') as f:
+            dict_annotations = json.load(f)
 
     png_dir = os.path.join("../assets/pictures", id)  
     print("Downloading PNG images to your machine ...")
@@ -177,15 +183,53 @@ def retrieve_data():
     return 'Hello, World!'
 
 
+class Trainer(Thread):
+
+    def __init__(self,  q):
+        Thread.__init__(self)
+        self.q = q
+
+    def init(self, input_shape, num_classes):
+        
+        self.num_classes = num_classes
+        self.input_shape = input_shape 
+        self.model = self.setup_model()
+    def setup_model(self):
+        baseModel = MobileNetV2(weights="imagenet", include_top=False, input_shape=self.input_shape,
+            input_tensor=layers.Input(shape=self.input_shape))
 
 
 
+        headModel = baseModel.output
+        headModel = layers.AveragePooling2D(pool_size=(3, 3))(headModel)
+        headModel = layers.Flatten(name="flatten")(headModel)
+        headModel = layers.Dense(128, activation="relu")(headModel)
+        headModel = layers.Dropout(0.5)(headModel)
+        headModel = layers.Dense(self.num_classes, activation="softmax")(headModel)
 
+        baseModel.trainable = False
+
+
+        model = keras.Model(inputs=baseModel.input, outputs=headModel)
+        model.compile(loss='binary_crossentropy',
+                    optimizer=keras.optimizers.Adam(),
+                    metrics=['accuracy'])
+        return model
+
+    def run(self):
+        while not stopTrainer.is_set():
+            print("Waiting for feeder to feed us :'( ")
+            train_set = self.q.get()
+            print("We got fed !!\n")
+            self.model.fit(train_set, epochs=5)
+
+
+trainer = Trainer(q)
+stopTrainer = Event()
+isTraining = Event()
 
 
 if __name__ == '__main__':
-    trainer = Trainer(q)
-    stopTrainer = Event()
-    isTraining = Event()
+    
     app.run(host='0.0.0.0', port=3333, debug=True)
     

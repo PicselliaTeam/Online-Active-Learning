@@ -23,4 +23,5 @@ def get_diff(path_old, path_new):
         else:
             diff["annotations"].append(ann)
     
+    print("New annotations :", len(diff["annotations"]))
     return diff 
