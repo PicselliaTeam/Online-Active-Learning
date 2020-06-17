@@ -20,15 +20,12 @@ from tensorflow.keras import layers
 from tensorflow.keras.applications import MobileNetV2
 from utils import get_diff
 
-
 app = Flask(__name__)
 app.config['CELERY_BROKER_URL'] = 'redis://localhost:6380/0'
 app.config['CELERY_RESULT_BACKEND'] = 'redis://localhost:6380/0'
 celery = Celery('app', broker=app.config['CELERY_BROKER_URL'])
 celery.conf.update(app.config)
-train_queue = queue.Queue()
-unlabelled_queue = queue.Queue()
-sorted_unlabelled_queue = queue.Queue()
+
 # CELERY TASKS # 
 
 @celery.task
@@ -40,27 +37,21 @@ def stop_training():
 @celery.task
 def start_training(id, init):
     cnt = 0
-
     path = "../assets/annotations/"+str(id)
-
     no = len(os.listdir(path))-1
-    
     if no != 0:
         old_path = os.path.join(path, str(no-1))+'.json'
         new_path = os.path.join(path, str(no))+'.json'
         dict_annotations = get_diff(old_path, new_path)
-
     else:
         with open(os.path.join(path, str(no))+'.json', 'r') as f:
             dict_annotations = json.load(f)
 
     png_dir = os.path.join("../assets/pictures", id)  
     print("Downloading PNG images to your machine ...")
-
     dl = 0
     total_length = len(dict_annotations["images"])
     for info in dict_annotations["images"]:
-
         pic_name = os.path.join(png_dir, info['external_picture_url'].split('/')[-1])
         if not os.path.isdir(png_dir):
             os.makedirs(png_dir)
@@ -107,9 +98,6 @@ class Trainer(Thread):
     def setup_model(self):
         baseModel = MobileNetV2(weights="imagenet", include_top=False, input_shape=self.input_shape,
             input_tensor=layers.Input(shape=self.input_shape))
-
-
-
         headModel = baseModel.output
         headModel = layers.AveragePooling2D(pool_size=(3, 3))(headModel)
         headModel = layers.Flatten(name="flatten")(headModel)
@@ -137,7 +125,7 @@ class Trainer(Thread):
         return sorted(list_of_score_dicts, key = lambda i: (i["score"]), reverse=True)
 
     def MakeQuery(self, unlabelled_set, 
-                uncertainty_measure=self.SumEntropy, EEstrat=self.sort_func):    
+                uncertainty_measure=SumEntropy, EEstrat=sort_func):    
         '''unlabelled_set : (image, filename) !
            uncertainty_measure : the higher the more uncertain
            return dict = {"filename", "score"} decreasingly sorted by score'''
@@ -184,17 +172,13 @@ def feed_data(path):
     
         realpath = os.path.join("../assets/pictures/",str(id), imgpath)
         img = PIL.Image.open(realpath).resize((224,224))
-
-       
         data[0].append(np.array(img).astype(float))
         data[1].append(ann["annotations"][0]["label"])
 
     
     def dataset_creation(data, input_shape, num_classes, labelmap):
         images, labels = data
-
         tmp_labels = []
-
         for e in labels:
             tmp_labels.append(labelmap[e])
 
@@ -213,13 +197,9 @@ def feed_data(path):
             image = tf.cast(image, tf.float32)
             image = tf.keras.applications.mobilenet_v2.preprocess_input(image)
             return (image, label)
-
-        
         return dataset.map(map_images)
 
     train_set = dataset_creation(data, input_shape=(224,224,3), num_classes=num_classes, labelmap=labelmap)
-    
-
     train_set = train_set.batch(4) 
     train_queue.put(train_set)
 
@@ -260,53 +240,16 @@ def retrieve_data():
     return 'Hello, World!'
 
 
-class Trainer(Thread):
 
-    def __init__(self,  q):
-        Thread.__init__(self)
-        self.q = q
+train_queue = queue.Queue()
+unlabelled_queue = queue.Queue()
+sorted_unlabelled_queue = queue.Queue()
 
-    def init(self, input_shape, num_classes):
-        
-        self.num_classes = num_classes
-        self.input_shape = input_shape 
-        self.model = self.setup_model()
-    def setup_model(self):
-        baseModel = MobileNetV2(weights="imagenet", include_top=False, input_shape=self.input_shape,
-            input_tensor=layers.Input(shape=self.input_shape))
-
-
-
-        headModel = baseModel.output
-        headModel = layers.AveragePooling2D(pool_size=(3, 3))(headModel)
-        headModel = layers.Flatten(name="flatten")(headModel)
-        headModel = layers.Dense(128, activation="relu")(headModel)
-        headModel = layers.Dropout(0.5)(headModel)
-        headModel = layers.Dense(self.num_classes, activation="softmax")(headModel)
-
-        baseModel.trainable = False
-
-
-        model = keras.Model(inputs=baseModel.input, outputs=headModel)
-        model.compile(loss='binary_crossentropy',
-                    optimizer=keras.optimizers.Adam(),
-                    metrics=['accuracy'])
-        return model
-
-    def run(self):
-        while not stopTrainer.is_set():
-            print("Waiting for feeder to feed us :'( ")
-            train_set = self.q.get()
-            print("We got fed !!\n")
-            self.model.fit(train_set, epochs=5)
-
-
-trainer = Trainer(train_queue, unlabelled_queue)
+trainer = Trainer(train_queue, unlabelled_queue, sorted_unlabelled_queue)
 stopTrainer = Event()
 isTraining = Event()
 shouldQuery = Event()
 
 if __name__ == '__main__':
-    
     app.run(host='0.0.0.0', port=3333, debug=True)
     
