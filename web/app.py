@@ -18,7 +18,6 @@ import os
 from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.applications import MobileNetV2
-from classification import Trainer
 from utils import get_diff
 
 
@@ -127,8 +126,12 @@ class Trainer(Thread):
         Entropy_vect = np.vectorize(Entropy)
         return np.sum(Entropy_vect(pred))
 
+    def sort_func(self, list_of_score_dicts):
+        '''E/E strat, currently only decreasingly sorting by score'''
+        return sorted(list_of_score_dicts, key = lambda i: (i["score"]), reverse=True)
 
-    def MakeQuery(self, unlabelled_set, uncertainty_measure=self.SumEntropy):    
+    def MakeQuery(self, unlabelled_set, 
+                uncertainty_measure=self.SumEntropy, EEstrat=self.sort_func):    
         '''unlabelled_set : (image, filename) !
            uncertainty_measure : the higher the more uncertain
            return dict = {"filename", "score"} decreasingly sorted by score'''
@@ -140,7 +143,7 @@ class Trainer(Thread):
             score_dict["score"].append(uncertainty_measure(pred))
             score_dict["filename"].append(filename)
             list_of_score_dicts.append(score_dict)
-        return sorted(list_of_score_dicts, key = lambda i: (i["score"]), reverse=True)
+        return EEstrat(list_of_score_dicts)
 
     def run(self):
         while not stopTrainer.is_set():
