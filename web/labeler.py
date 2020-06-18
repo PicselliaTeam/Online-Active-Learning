@@ -1,12 +1,12 @@
 import os 
-os.environ['DISPLAY'] = ':0'
 import json
 import numpy as np
 import requests 
 from matplotlib.widgets import TextBox
+import matplotlib.pyplot as plt
 
 
-def configure_dir(png_dir='./images/'):
+def configure_dir(png_dir='../assets/images/'):
     for file in os.listdir(png_dir):
         if not file.endswith((".png", ".jpg")):
             print("Your directory does not contain only images, please clean it :)")
@@ -34,24 +34,19 @@ def get_10per_dataset(png_dir):
     per10 = listdir[:int(0.1*len(listdir))]
     return [os.path.join(png_dir, e) for e in per10]
 
-path = configure_dir()
-labels = configure_label()
 
-
-to_label = get_10per_dataset(path)
-
-import matplotlib.pyplot as plt
-import cv2
 
 def labeler(to_label, labels):
-    print(labels)
+    print(f"Your labels are: {labels}")
     diff = {}
     diff["categories"] = []
     diff["infos"]= []
     diff["images"]= []
     diff["annotations"]= []
-    
-    ground_truth = []
+    labelmap = {}
+    for i, l in enumerate(labels_list):
+        labelmap[l] = i
+    ground_truths = []
     def submit(text):
         plt.close()
         print(text)
@@ -62,14 +57,29 @@ def labeler(to_label, labels):
         plt.imshow(im)
         axbox = plt.axes([0.1, 0.05, 0.8, 0.075])
         text_box = TextBox(axbox, 'Label', initial="")
-        text_box.on_submit(lambda x: [ground_truth.append((img,x)), plt.close()])
+        text_box.on_submit(lambda x: [ground_truths.append((labelmap[x])), plt.close()]) #TODO: Check class
         plt.show()
-    return ground_truth
+    data = {"labelled_data": (to_label, ground_truths), "labels_list": labels}
+    return data
+
+def send_data(data, init=True):
+    data["init"] = init
+    r = requests.post("http://localhost:3333/train", data=json.dumps(data))
     
+# path = configure_dir()
+# to_label = get_10per_dataset(path)
+# labels_list = configure_label()
+# data = labeler(to_label, labels_list)
 
-x = labeler(to_label, labels)
 
-# def format_output(data):
+# data["init"]=True
+# to_save = data
+# with open("temp.json", "w") as f:
+#     json.dump(to_save, f)
+
+with open("temp.json", "r") as f:
+    data = json.load(f)
 
 
-print(x)
+send_data(data, init=False)
+
