@@ -18,9 +18,9 @@ from tensorflow.keras import layers
 from tensorflow.keras.applications import MobileNetV2
 import sys
 
-if sys.platform.startswith('win'):
-    import eventlet
-    eventlet.monkey_patch()
+# if sys.platform.startswith('win'):
+#     import eventlet
+#     eventlet.monkey_patch()
 
 
 app = Flask(__name__)
@@ -43,6 +43,7 @@ class Trainer(Thread):
         self.input_shape = input_shape 
         self.model = self.setup_model()
         self.started = True
+
     def setup_model(self):
         baseModel = MobileNetV2(weights="imagenet", include_top=False, input_shape=self.input_shape,
             input_tensor=layers.Input(shape=self.input_shape))
@@ -93,20 +94,44 @@ class Trainer(Thread):
             list_of_score_dicts.append(score_dict)
         return EEstrat(self, list_of_score_dicts)
 
+    def update_train_set(self):
+        l = []
+        k = 0
+        while self.train_queue.qsize() > 0 or k==0:
+            k+=1
+            l.append(self.train_queue.get())
+
+        train_set = l[0]
+        if len(l)>1:
+            for k in len(l)-1:
+                train_set.concatenate(l[k+1])
+        print(f"We concatenated {len(l)} training datasets")
+        return train_set
+
+    def update_unlabelled_set(self):
+        k = 0
+        while self.unlabelled_queue.qsize() > 0 or k==0:
+            k+=1
+            ulabelled_set = self.unlabelled_queue.get()
+        print(f"We took the {k}-ieme unlab set")
+        return ulabelled_set
+
     def run(self):
         while not stopTrainer.is_set():
             print("Waiting for the feeder to feed us :'( ")
-            train_set = self.train_queue.get()
+            l = []
+            first = True
+            train_set = self.update_train_set()
             print("We got fed !! Resuming training now")
             self.model.fit(train_set, epochs=5)
             print("Retrieving the unlabelled set")
-            unlabelled_set = self.unlabelled_queue.get()
+            unlabelled_set = self.update_unlabelled_set()
             print("Making predictions ....")
             sorted_unlabelled_set = self.MakeQuery(unlabelled_set)  
             print("Sending query")   
             self.send_sorted_data(sorted_unlabelled_set) 
             
-            
+
 # UTILS #
 
 def decode_img(file_path, model_input_shape=(224, 224)):
@@ -118,7 +143,6 @@ def decode_img(file_path, model_input_shape=(224, 224)):
 
 
 def training_set_creation(data, model_input_shape, num_classes):
-    print(data)
     dataset = tf.data.Dataset.from_tensor_slices(tuple(data))     
     def pre_pro_training(file_path, label): 
         img = decode_img(file_path, model_input_shape=model_input_shape)
@@ -146,14 +170,18 @@ def stop_training():
 def feed_training_data(data, labels_list):
     num_classes = len(labels_list)
     model_input_shape = (224, 224)
-    if not trainer.started:
-        trainer.init(input_shape=model_input_shape+(3,), num_classes=num_classes)
-        trainer.start()
-
     train_set = training_set_creation(data, num_classes=num_classes, model_input_shape=model_input_shape)
     train_set = train_set.batch(4) #TODO: Batch size variable 
     train_queue.put(train_set)
     return "feed_training done"
+
+@celery_worker.task(name="init_worker")
+def init(labels_list):
+    num_classes = len(labels_list)
+    model_input_shape = (224, 224)
+    if not trainer.started:
+        trainer.init(input_shape=model_input_shape+(3,), num_classes=num_classes)
+        trainer.start()
 
 @celery_worker.task(name="feed_query")
 def feed_query_data(data):
@@ -162,7 +190,13 @@ def feed_query_data(data):
     unlabelled_queue.put(unlabelled_set)
     return "feed_query done"
 
-# @app.route("/")
+@app.route("/init_training", methods=["POST"])
+def send_init_sig():
+    '''Init the worker thread'''
+    data = json.loads(request.data)
+    labels_list = data["labels_list"]
+    init.delay(labels_list)
+    return ""
 
 @app.route('/train', methods=['POST'])
 def retrieve_data():
@@ -189,7 +223,7 @@ def retrieve_data():
 
     feed_training_data.delay(data["labelled_data"], data["labels_list"])
     feed_query_data.delay(data["unlabelled"])
-    return "hello gary"
+    return ""
 
 
 train_queue = queue.Queue()
