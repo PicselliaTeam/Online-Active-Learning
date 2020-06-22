@@ -5,26 +5,24 @@ import dash_html_components as html
 import flask
 import time
 import os
-from tasks import hello
 import numpy as np
 import json
 import requests 
 from flask import request
 import random
-# import eventlet
-# eventlet.monkey_patch()
+
+
+
+## Server conf ##
 
 server = flask.Flask('app')
-server.config['CELERY_BROKER_URL'] = 'redis://127.0.0.1:6382/0'
-server.config['CELERY_RESULT_BACKEND'] = 'redis://127.0.0.1:6382/0'
-
 
 external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
-
 app = dash.Dash('app', server=server, external_stylesheets=external_stylesheets)
+image_directory = "assets/images/"
 
-image_directory  = "assets/images/"
 
+## Labeler class definition ##
 
 class Labeler():
     def __init__(self, png_dir):
@@ -67,9 +65,6 @@ class Labeler():
             self.labelmap[l] = i
 
     def update_iter(self):
-        # number_tolabel = int(0.1*len(self.to_label+self.unlabelled))
-        # self.to_label = self.unlabelled[:number_tolabel]
-        # [self.unlabelled.remove(p) for p in self.to_label]
         [self.unlabelled.remove(p) for p in self.images_tosend if p in self.unlabelled]
         self.iter_images = np.nditer([self.unlabelled])
         print("iterator updated !")
@@ -94,8 +89,10 @@ class Labeler():
         print("data sent!")
         self.ground_truths = []
         self.images_tosend = [to_keep]
-        
+
 labeler = Labeler(png_dir=image_directory)
+
+## Layout, etc ##
 
 static_image_route = "/static/"
 center_style = {'display': 'flex', 'align-items': 'center', 'justify-content': 'center'}
@@ -108,23 +105,24 @@ app.layout = html.Div(
         html.Div(id="disp_sbutton", children="Labels Button")
     ]
 )
- 
 
+
+## Flask routes ##
 
 @server.route("/retrieve_query", methods=['POST'])
 def retrieve_data():
     '''Retrieve the sorted unlabelled list of dicts of keys [filenames, scores]'''
     unlabelled_sorted_dict = json.loads(request.data)
-    
+    ## retrieve task here
     labeler.unlabelled = [os.path.split(x["filename"])[1] for x in unlabelled_sorted_dict]
     labeler.update_iter()
     print("data retrieved!", len(labeler.unlabelled))
     return "Hey"
 
 
-
-@app.server.route(f'{static_image_route}<image_name>')
+@server.route(f'{static_image_route}<image_name>')
 def serve_image(image_name):
+    ## 
     if image_name not in labeler.unlabelled:
         raise Exception(f'"{image_name}" is excluded from the allowed static files')
     return flask.send_from_directory(image_directory, image_name)
@@ -141,23 +139,23 @@ def update(*n_clicks):
         image = str(next(labeler.iter_images))
         labeler.images_tosend.append(image)
     except StopIteration:
-        return ("/stop_annotating", html.Div(msg))
+        return ("/stop_annotating", html.Div('Fini'))
 
     msg = "No button was clicked"
     changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0]
+    ## append selected label task here
     for label in labeler.labels_list:
         if label in changed_id:
             selected_label = label
             labeler.ground_truths.append(labeler.labelmap[selected_label])
             msg = f'Label selected was {selected_label}'
     
-
+    ## calculate len task here
     if BATCH_SIZE>len(labeler.ground_truths):
         print(labeler.ground_truths, labeler.images_tosend)
         return (static_image_route + image, html.Div(msg))
 
     else:
-        
         labeler.send_data()
         return (static_image_route + image, html.Div(msg))
     
