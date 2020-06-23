@@ -8,7 +8,6 @@ import sys
 import PIL
 import numpy as np
 from redis import Redis 
-from rq import Queue
 from threading import Thread, Event
 import queue
 import tensorflow as tf
@@ -16,7 +15,6 @@ import os
 from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.applications import MobileNetV2
-import sys
 
 # if sys.platform.startswith('win'):
 #     import eventlet
@@ -28,12 +26,12 @@ app.config['CELERY_BROKER_URL'] = 'redis://127.0.0.1:6381/0'
 app.config['CELERY_RESULT_BACKEND'] = 'redis://127.0.0.1:6381/0'
 celery_worker = Celery('worker', broker=app.config['CELERY_BROKER_URL'])
 
-# TRAINER CLASS #
+# TRAINER and FEEDER CLASSES #
 
 class Trainer(Thread):
 
-    def __init__(self, trainable_queue, unlabelled_queue):
-        Thread.__init__(self)
+    def __init__(self, trainable_queue, unlabelled_queue, daemon=True):
+        Thread.__init__(self, daemon=daemon)
         self.train_queue = train_queue
         self.unlabelled_queue = unlabelled_queue
         self.started = False
@@ -55,9 +53,6 @@ class Trainer(Thread):
         headModel = layers.Dense(self.num_classes, activation="softmax")(headModel)
         baseModel.trainable = False
         model = keras.Model(inputs=baseModel.input, outputs=headModel)
-        model.compile(loss='binary_crossentropy',
-                    optimizer=keras.optimizers.Adam(),
-                    metrics=['accuracy'])
         return model
 
     def SumEntropy(self, pred):
@@ -72,10 +67,7 @@ class Trainer(Thread):
 
     def send_sorted_data(self, data):
         r = requests.post("http://127.0.0.1:3334/retrieve_query", data=json.dumps(data))
-        with open("error.html", "w") as f:
-            f.write(r.text)
-        with open("dumped.json", "w") as f:
-            json.dump(data, f)
+
 
     def MakeQuery(self, unlabelled_set, 
                 uncertainty_measure=SumEntropy, EEstrat=sort_func):    
@@ -103,7 +95,7 @@ class Trainer(Thread):
 
         train_set = l[0]
         if len(l)>1:
-            for k in len(l)-1:
+            for k in range(len(l)-1):
                 train_set.concatenate(l[k+1])
         print(f"We concatenated {len(l)} training datasets")
         return train_set
@@ -112,11 +104,15 @@ class Trainer(Thread):
         k = 0
         while self.unlabelled_queue.qsize() > 0 or k==0:
             k+=1
+            print("looping")
             ulabelled_set = self.unlabelled_queue.get()
         print(f"We took the {k}-ieme unlab set")
         return ulabelled_set
 
     def run(self):
+        self.model.compile(loss='binary_crossentropy',
+            optimizer=keras.optimizers.Adam(),
+            metrics=['accuracy'])
         while not stopTrainer.is_set():
             print("Waiting for the feeder to feed us :'( ")
             l = []
@@ -130,7 +126,8 @@ class Trainer(Thread):
             sorted_unlabelled_set = self.MakeQuery(unlabelled_set)  
             print("Sending query")   
             self.send_sorted_data(sorted_unlabelled_set) 
-            
+
+
 
 # UTILS #
 
@@ -155,48 +152,38 @@ def unlabelled_set_creation(data, model_input_shape):
         img = decode_img(file_path, model_input_shape=model_input_shape)
         return (img, file_path)
     dataset = tf.data.Dataset.from_tensor_slices(data)
-    return dataset.map(pre_pro_unlabelled)
+    return dataset.map(pre_pro_unlabelled) 
 
-
-
-
-# CELERY TASKS # 
-
-@celery_worker.task(name="stopper")
-def stop_training():
-    stopTrainer.set()
-
-@celery_worker.task(name="feed_training")
 def feed_training_data(data, labels_list):
     num_classes = len(labels_list)
     model_input_shape = (224, 224)
     train_set = training_set_creation(data, num_classes=num_classes, model_input_shape=model_input_shape)
     train_set = train_set.batch(4) #TODO: Batch size variable 
     train_queue.put(train_set)
-    return "feed_training done"
 
-@celery_worker.task(name="init_worker")
-def init(labels_list):
+def feed_query_data(data):
+    unlabelled_set = unlabelled_set_creation(data, model_input_shape=(224, 224)) 
+    unlabelled_set.batch(4) #TODO: Variable batch size
+    unlabelled_queue.put(unlabelled_set)
+
+## Server routes ##
+
+
+@app.route("/stop_training", methods=["POST"])
+def stop_training():
+    stopTrainer.set()
+
+@app.route("/init_training", methods=["POST"]) ## No need for async since need to wait for it
+def send_init_sig():
+    '''Init the worker thread'''
+    data = json.loads(request.data)
+    labels_list = data["labels_list"]
     num_classes = len(labels_list)
     model_input_shape = (224, 224)
     if not trainer.started:
         trainer.init(input_shape=model_input_shape+(3,), num_classes=num_classes)
         trainer.start()
-
-@celery_worker.task(name="feed_query")
-def feed_query_data(data):
-    unlabelled_set = unlabelled_set_creation(data, model_input_shape=(224, 224)) 
-    unlabelled_set.batch(4) #TODO: Variable batch size
-    unlabelled_queue.put(unlabelled_set)
-    return "feed_query done"
-
-@app.route("/init_training", methods=["POST"])
-def send_init_sig():
-    '''Init the worker thread'''
-    data = json.loads(request.data)
-    labels_list = data["labels_list"]
-    init.delay(labels_list)
-    return ""
+    return "Trainer initialized"
 
 @app.route('/train', methods=['POST'])
 def retrieve_data():
@@ -221,8 +208,8 @@ def retrieve_data():
     with open(path_annot, 'w') as f:
         json.dump(data, f)
 
-    feed_training_data.delay(data["labelled_data"], data["labels_list"])
-    feed_query_data.delay(data["unlabelled"])
+    feed_training_data(data["labelled_data"], data["labels_list"])
+    feed_query_data(data["unlabelled"])
     return ""
 
 

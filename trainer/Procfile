@@ -1,5 +1,0 @@
-server: python app.py
-worker: celery -A trainer.app.celery_worker worker --loglevel=info -P eventlet (windows)
-worker: celery -A trainer.app.celery_worker worker --loglevel=info (linux)
-
-redis-server: redis-server --port 6381
