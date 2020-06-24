@@ -109,3 +109,7 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+*.pb
+*.index
+*.data*
