@@ -8,6 +8,7 @@ EVAL_AND_QUERY_EVERY = 5
 INPUT_SHAPE = (224, 224)
 NUM_EPOCHS_PER_LOOP = 5
 TRAINING_VERBOSITY = 0
+ANNOTATIONS_PATH = "./annotations"
 
 def setup_model(num_classes, input_shape=INPUT_SHAPE+(3,)):
     '''Define your model here, num_classes has to be the only argument.
