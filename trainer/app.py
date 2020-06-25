@@ -8,9 +8,6 @@ from threading import Thread, Event
 import queue
 import tensorflow as tf
 import os
-# from tensorflow import keras
-# from tensorflow.keras import layers
-# from tensorflow.keras.applications import MobileNetV2
 import config
 
 app = Flask(__name__)
@@ -43,26 +40,19 @@ class Trainer(Thread):
         return sorted(list_of_score_dicts, key = lambda i: (i["score"]), reverse=True)
 
     def send_sorted_data(self, data):
-        r = requests.post("http://127.0.0.1:3334/retrieve_query", data=json.dumps(data))
+        r = requests.post(config.LABELER_IP+"/retrieve_query", data=json.dumps(data))
 
-
-    def MakeQuery(self, unlabelled_set, 
-                uncertainty_measure=config.uncertainty_measure, EEstrat=config.ee_strat):    
-        '''unlabelled_set : (image, filename) !
-           uncertainty_measure : the higher the more uncertain
-           return dict = {"filename", "score"} decreasingly sorted by score'''
+    def make_query(self, data,
+                uncertainty_measure=config.uncertainty_measure, EEstrat=config.ee_strat):
         dict_keys = ["filename", "score"]
         list_of_score_dicts = []
-        #TODO: Batching !
-        k=0
-        for unlabelled_image, filename in unlabelled_set.as_numpy_iterator():
-            k+=1
-            print(k)
-            unlabelled_image = np.expand_dims(unlabelled_image, axis=0)
+        dataset = data[0]
+        filenames = data[1]
+        preds = self.model.predict(dataset)
+        for i,p in enumerate(preds):
             score_dict = dict.fromkeys(dict_keys)
-            pred = self.model.predict(unlabelled_image)
-            score_dict["score"] = uncertainty_measure(pred[0])
-            score_dict["filename"] = filename.decode("utf-8") 
+            score_dict["score"] = uncertainty_measure(p)
+            score_dict["filename"] = filenames[i]
             list_of_score_dicts.append(score_dict)
         return EEstrat(list_of_score_dicts)
 
@@ -77,23 +67,23 @@ class Trainer(Thread):
             train_set = temp[0]
             if len(temp)>1:
                 for k in range(len(temp)-1):
-                    train_set.concatenate(l[k+1])
-            print("We got fed new training data!")
+                    train_set.concatenate(temp[k+1])
+            print(f"We got fed new training data! Number of requests before new evaluation and query : {config.EVAL_AND_QUERY_EVERY-self.eval_and_query_countdown}")
             return train_set
         else:
             return previous_train_set
 
-    def update_unlabelled_set(self):
+    def update_unlabelled_data(self):
         k = 0
         while self.unlabelled_queue.qsize() > 0 or k==0:
             k+=1
-            unlabelled_set = self.unlabelled_queue.get()
-        return unlabelled_set
+            unlabelled_data = self.unlabelled_queue.get()
+        return unlabelled_data
 
     def run(self):
         print("Waiting for the test set")
         test_set = self.test_queue.get()
-        print("Test set acquired")
+        print("Test set acquired, starting training")
         while not stopTrainer.is_set():
             if self.first_iter:
                 self.first_iter = False
@@ -102,7 +92,7 @@ class Trainer(Thread):
                 train_set.concatenate(self.update_train_set(train_set))
             self.model.fit(train_set, epochs=config.NUM_EPOCHS_PER_LOOP, verbose=config.TRAINING_VERBOSITY)
             if self.unlabelled_queue.qsize() > 0:
-                unlabelled_set = self.update_unlabelled_set()
+                unlabelled_data = self.update_unlabelled_data()
                 if self.eval_and_query_countdown >= config.EVAL_AND_QUERY_EVERY:
                     print("Model evaluation")
                     self.eval_and_query_countdown = 0
@@ -118,11 +108,11 @@ class Trainer(Thread):
                                 ## Add stopped request to labeler
                     if not stopTrainer.is_set():
                         print("Starting predictions")
-                        sorted_unlabelled_set = self.MakeQuery(unlabelled_set)  
-                        print("Sending query")   
-                        self.send_sorted_data(sorted_unlabelled_set) 
+                        sorted_unlabelled_data = self.make_query(unlabelled_data)  
+                        print("Sending query")
+                        self.send_sorted_data(sorted_unlabelled_data) 
         print("Stopping")
-        self.model.save("saved_model")
+        self.model.save(config.SAVED_MODEL_DIR)
         print("Model saved, you can safely shut down the server")
 
 # UTILS #
@@ -133,6 +123,34 @@ def decode_img(file_path):
     img = tf.image.resize(img, config.INPUT_SHAPE)
     return tf.keras.applications.mobilenet_v2.preprocess_input(img)
 
+def save_test_data(data):
+    if not os.path.isdir(config.ANNOTATIONS_SAVE_PATH):
+        os.mkdir(config.ANNOTATIONS_SAVE_PATH)
+    path = os.path.join(config.ANNOTATIONS_SAVE_PATH, "annotations.json")
+    if os.path.isfile(path):
+        return
+    with open(path, "w") as f:
+        json.dump(data, f)
+
+
+def save_training_annotations(data):
+    if not os.path.isdir(config.ANNOTATIONS_SAVE_PATH):
+        os.mkdir(config.ANNOTATIONS_SAVE_PATH)
+    path = os.path.join(config.ANNOTATIONS_SAVE_PATH, "annotations.json")
+    if os.path.isfile(path):
+        with open(path, 'r') as f:
+            data_json = json.load(f)
+        if "labelled_data" in data_json:
+            data_json["labelled_data"][0].extend(data["labelled_data"][0])
+            data_json["labelled_data"][1].extend(data["labelled_data"][1])
+        else:
+            data_json["labelled_data"] = data["labelled_data"]
+        data_json["unlabelled"] = data["unlabelled"]
+    else:
+        data_json = data
+    with open(path, "w") as f:
+        json.dump(data_json, f)
+
 
 def dataset_set_creation(data, num_classes):
     dataset = tf.data.Dataset.from_tensor_slices(tuple(data))     
@@ -140,40 +158,38 @@ def dataset_set_creation(data, num_classes):
         img = decode_img(file_path)
         label = tf.one_hot(label, depth=num_classes)
         return (img, label)
-    return dataset.map(pre_pro_training)
+    return dataset.map(pre_pro_training).shuffle(config.SHUFFLE_BUFFER_SIZE).batch(config.BATCH_SIZE)
 
 def unlabelled_set_creation(data):
     def pre_pro_unlabelled(file_path):
         img = decode_img(file_path)
-        return (img, file_path)
+        return img
     dataset = tf.data.Dataset.from_tensor_slices(data)
-    return dataset.map(pre_pro_unlabelled) 
+    return [dataset.map(pre_pro_unlabelled).batch(config.BATCH_SIZE), data]
 
 def feed_test_data(data, labels_list):
     num_classes = len(labels_list)
     test_set = dataset_set_creation(data, num_classes=num_classes)
-    test_set = test_set.batch(config.BATCH_SIZE)
     test_queue.put(test_set)
 
 
 def feed_training_data(data, labels_list):
     num_classes = len(labels_list)
     train_set = dataset_set_creation(data, num_classes=num_classes)
-    train_set = train_set.batch(config.BATCH_SIZE)
     train_queue.put(train_set)
 
 def feed_query_data(data):
-    unlabelled_set = unlabelled_set_creation(data) 
-    unlabelled_set.batch(config.BATCH_SIZE)
-    unlabelled_queue.put(unlabelled_set)
+    unlabelled_data = unlabelled_set_creation(data) 
+    unlabelled_queue.put(unlabelled_data)
 
 ## Server routes ##
 
 
 @app.route("/stop_training", methods=["POST"])
 def stop_training():
-    stopTrainer.set()
-    trainer.join()
+    if trainer.started:
+        stopTrainer.set()
+        trainer.join()
     return "Training Stopped"
 
 @app.route("/init_training", methods=["POST"]) ## No need for async since need to wait for it
@@ -183,7 +199,7 @@ def send_init_sig():
     labels_list = data["labels_list"]
     num_classes = len(labels_list)
     if not trainer.started:
-        model = config.setup_model(num_classes)
+        model = config.model_fn(num_classes)
         trainer.init(model)
         trainer.start()
     return "Trainer initialized"
@@ -195,25 +211,11 @@ def retrieve_data():
         reqs = {
             "labelled_data": [impaths, labels]
             "labels_list": self explanatory
-            "init": boolean
             "unlabelled": [impaths] 
             }
     """
     data = json.loads(request.data)
-    if not os.path.isdir(config.ANNOTATIONS_PATH):
-        os.mkdir(config.ANNOTATIONS_PATH)
-    path = os.path.join(config.ANNOTATIONS_PATH, "annotations.json")
-    if os.path.isfile(path):
-        with open(path, 'r') as f:
-            data_json = json.load(f)
-        data_json["labelled_data"][0].extend(data["labelled_data"][0])
-        data_json["labelled_data"][1].extend(data["labelled_data"][1])
-        data_json["unlabelled"] = data["unlabelled"]
-    else:
-        data_json = data
-    with open(path, "w") as f:
-        json.dump(data_json, f)
-
+    save_training_annotations(data)
     feed_training_data(data["labelled_data"], data["labels_list"])
     feed_query_data(data["unlabelled"])
     return ""
@@ -224,6 +226,7 @@ def test_data():
         data = {"test_data":, "labels_list":}
     '''
     data = json.loads(request.data)
+    save_test_data(data)
     feed_test_data(data["test_data"], data["labels_list"])
     return ""
 
