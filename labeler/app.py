@@ -11,13 +11,12 @@ from flask import request
 import random
 from threading import Thread
 import queue
-
+import config
 
 ## Server conf ##
 server = flask.Flask('app')
 external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
 app = dash.Dash('app', server=server, external_stylesheets=external_stylesheets)
-image_directory = "assets/images/"
 
 ## Labeler class definition ##
 
@@ -28,7 +27,7 @@ class Labeler():
         self.images_tosend = []
         self.ground_truths = []
         random.shuffle(self.unlabelled)
-        # self.test_set = self.unlabelled[:int(0.05*len(self.unlabelled))] 
+        # self.test_set = self.unlabelled[:int(config.TEST_SET_FRAC*len(self.unlabelled))] 
         self.test_set = self.unlabelled[:10] 
         self.test_set_gt = []
         self.test_set_iter = np.nditer([self.test_set])
@@ -42,7 +41,7 @@ class Labeler():
     def configure_dir(self, png_dir):
         for file in os.listdir(png_dir):
             if not file.endswith((".png", ".jpg")):
-                raise ValueError("Your directory does not contain only images, please clean it")
+                raise ValueError("Your PNG_DIR does not contain only .png or .jpg, please clean it")
                 
         print("PNG dir OK")
         return os.listdir(png_dir)
@@ -60,7 +59,7 @@ class Labeler():
         '''reqs = {"labelled_data": [impaths, labels] 
                 "labels_list": self explanatory
                 "unlabelled": [impaths] }'''      
-        path = "./labeler/assets/images/"
+        path = os.path.join("labeler", config.IMAGE_DIRECTORY)
         to_keep = self.images_tosend.pop()
         [self.unlabelled.remove(p) for p in self.images_tosend if p in self.unlabelled]
         print(f"Number of images to annotate remaining: {len(self.unlabelled)}")
@@ -91,7 +90,7 @@ class SendTestSet(Thread):
         r = requests.post("http://localhost:3333/test_data", data=json.dumps(data))
 
 ## Object and threads init ##
-labeler = Labeler(png_dir=os.path.join("labeler", image_directory))
+labeler = Labeler(png_dir=os.path.join("labeler", config.IMAGE_DIRECTORY))
 q_send = queue.Queue()
 test_queue = queue.Queue()
 sender = Sender(q_send)
@@ -111,8 +110,7 @@ url_bar_and_content_div = html.Div([
 
 
 def annotation_layout():
-    return html.Div([
-                         
+    return html.Div([                        
                     html.Div([html.Button(name1, id={'role': 'label-button', 'index': name1}, n_clicks=0) for name1 in labeler.labels_list], style=center_style),
                     html.Div([html.Img(id='image', style=image_style)], style=center_style),
                     html.Div(html.Button("stop-signal", id="stop-signal57948", n_clicks=0), style=center_style)
@@ -153,7 +151,7 @@ def retrieve_data():
 def serve_image(image_name):
     if image_name not in labeler.unlabelled+labeler.test_set:
         raise Exception(f'"{image_name}" is excluded from the allowed static files')
-    return flask.send_from_directory(image_directory, image_name)
+    return flask.send_from_directory(config.IMAGE_DIRECTORY, image_name)
 
 @server.route("/stop_annotating")
 def serve_stop_image():
@@ -224,7 +222,7 @@ def update(*n_clicks):
                 break
         if labeler.test_set_done:
             print("sending")
-            path = "./labeler/assets/images/"
+            path = os.path.join("labeler", config.IMAGE_DIRECTORY)
             to_send = [path+x for x in labeler.test_set]
             data = {"test_data": (to_send, labeler.test_set_gt), 
                     "labels_list": labeler.labels_list}
@@ -246,7 +244,7 @@ def update(*n_clicks):
             r = requests.post("http://localhost:3333/stop_training", data=json.dumps({}))
             return "/stop_annotating"
 
-    if BATCH_SIZE>len(labeler.ground_truths):
+    if config.BUFFER_SIZE>len(labeler.ground_truths):
         return static_image_route + image
     else:
         data = labeler.prep_send_data()
@@ -254,7 +252,6 @@ def update(*n_clicks):
         return static_image_route + image
 
     
-BATCH_SIZE = 4
 
 if __name__ == '__main__':
     # app.run_server(debug=True, use_reloader=False) #to not launch twice everything

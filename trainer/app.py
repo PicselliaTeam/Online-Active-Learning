@@ -47,36 +47,38 @@ class Trainer(Thread):
 
 
     def MakeQuery(self, unlabelled_set, 
-                uncertainty_measure=SumEntropy, EEstrat=sort_func):    
+                uncertainty_measure=config.uncertainty_measure, EEstrat=config.ee_strat):    
         '''unlabelled_set : (image, filename) !
            uncertainty_measure : the higher the more uncertain
            return dict = {"filename", "score"} decreasingly sorted by score'''
         dict_keys = ["filename", "score"]
         list_of_score_dicts = []
         #TODO: Batching !
+        k=0
         for unlabelled_image, filename in unlabelled_set.as_numpy_iterator():
+            k+=1
+            print(k)
             unlabelled_image = np.expand_dims(unlabelled_image, axis=0)
             score_dict = dict.fromkeys(dict_keys)
             pred = self.model.predict(unlabelled_image)
-            score_dict["score"] = uncertainty_measure(self, pred[0])
+            score_dict["score"] = uncertainty_measure(pred[0])
             score_dict["filename"] = filename.decode("utf-8") 
             list_of_score_dicts.append(score_dict)
-        return EEstrat(self, list_of_score_dicts)
+        return EEstrat(list_of_score_dicts)
 
     def update_train_set(self, previous_train_set=None):
         if self.train_queue.qsize()>0 or previous_train_set==None:
-            l = []
+            temp = []
             k = 0
             while self.train_queue.qsize() > 0 or k==0:
                 k+=1
                 self.eval_and_query_countdown+=1
-                l.append(self.train_queue.get())
-
-            train_set = l[0]
-            if len(l)>1:
-                for k in range(len(l)-1):
+                temp.append(self.train_queue.get())
+            train_set = temp[0]
+            if len(temp)>1:
+                for k in range(len(temp)-1):
                     train_set.concatenate(l[k+1])
-            print("We got fed !")
+            print("We got fed new training data!")
             return train_set
         else:
             return previous_train_set
@@ -108,10 +110,17 @@ class Trainer(Thread):
                     print("Evaluation result:")
                     for e,n in zip(evaluation, self.model.metrics_names):
                         print(f"{n} is {e}")
-                    print("Starting predictions")
-                    sorted_unlabelled_set = self.MakeQuery(unlabelled_set)  
-                    print("Sending query")   
-                    self.send_sorted_data(sorted_unlabelled_set) 
+                        tresh = config.EARLY_STOPPING_METRICS_TRESHOLDS.get(n)
+                        if tresh:
+                            if e>=tresh:
+                                print(f"Treshold ({tresh}) reached for {n}")
+                                stopTrainer.set()
+                                ## Add stopped request to labeler
+                    if not stopTrainer.is_set():
+                        print("Starting predictions")
+                        sorted_unlabelled_set = self.MakeQuery(unlabelled_set)  
+                        print("Sending query")   
+                        self.send_sorted_data(sorted_unlabelled_set) 
         print("Stopping")
         self.model.save("saved_model")
         print("Model saved, you can safely shut down the server")
