@@ -54,7 +54,7 @@ Other settings are available and described inside the file.
 ### Trainer configuration
 Set up parameters for the model training, active learning strategy...
 #### Constants
-The most important constants to set up are :
+The most important variables to set up are :
 - BATCH_SIZE, heavily depends on your model and hardware configuration.
 - EARLY_STOPPING_METRICS_THRESHOLDS, stop the training when reaching one the thresholds for the specific metrics. More details inside the file.
 - EVAL_AND_QUERY_EVERY, number of batches sent by the Labeler to wait before evaluating and making active learning queries.
