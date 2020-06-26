@@ -12,6 +12,8 @@ Active learning has been proven numerous times to be efficient at reducing the q
 That's why this framework proposes a way to do online learning combined with active learning with Tensorflow 2.2.
 A little annotation interface has been developed so you can play with the framework for a classification task. (Don't worry the Object Detection part of the framework will be released soon)
 
+To use our framework with a really optimized annotation interface, both for classification and detection/segmentation, you can check out our platform : [Picsell.ia](https://bit.ly/3g24i5n) and the best of all, it's free to use ! 🚀
+
 ## The structure
 Two servers run in parallel. One is the Labeling Interface (Labeler), the other one is the Training server (Trainer).
 The Labeler sends annotated data to the trainer every n images.
@@ -56,16 +58,18 @@ Set up parameters for the model training, active learning strategy...
 #### Constants
 The most important variables to set up are :
 - BATCH_SIZE, heavily depends on your model and hardware configuration.
-- EARLY_STOPPING_METRICS_THRESHOLDS, stop the training when reaching one the thresholds for the specific metrics. More details inside the file.
+- EARLY_STOPPING_METRICS_THRESHOLDS, stop the training when reaching one of the thresholds for the specific metrics. More details inside the file.
 - EVAL_AND_QUERY_EVERY, number of batches sent by the Labeler to wait before evaluating and making active learning queries.
 - INPUT_SHAPE, the input shape of your model.
 
 Other settings are available and described inside the file.
 
 #### Model, E/E strategy and query method
-- model_fn, a function returning a compiled keras model, should have num_classes as sole needed argument.
-- uncertainty_measure, the query method used. You can select one from the trainer/uncertainty_measures or define your own.
-- ee_strat, the exploration/exploitation strategy. You can select one from the trainer/ee_strats model or defien your own.
+- ``model_fn`` A function returning a compiled keras model :
+ - setup_model(n_classes)
+ - reload_model
+- ``uncertainty_measure`` The query method used. You can select one from the trainer/uncertainty_measures or define your own.
+- ``ee_strat`` The exploration/exploitation strategy. You can select one from the trainer/ee_strats model or defien your own.
 
 ## Roadmap
 
@@ -73,7 +77,7 @@ Other settings are available and described inside the file.
 - [x] Initial release
 - [ ] Bug hunting
 - [ ] Add more E/E strategies and query methods
-- [ ] Add support for object-detection when the Tensorflow API is updated to tensorflow 2 !!
+- [ ] Add support for object-detection when the Tensorflow Object Detection API is updated to tensorflow 2 !!
 - [ ] Any other requested feature
 
 ### Front end enhancements
@@ -85,6 +89,10 @@ Those features are less important since the Labeler isn't the core aspect of thi
 
 ## Getting Help
 
+You can come talk to us on the following channels :
+- [Discord](https://discord.gg/fY5cjvJ)
+- [Facebook](https://www.facebook.com/Picsellia-397087527546284)
+- [Reddit](https://www.reddit.com/r/picsellia/)
 
 ## Contributing, feature requests and bug reporting
 - If you want to request a feature or report a bug you can open an issue.
