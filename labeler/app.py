@@ -9,9 +9,10 @@ import json
 import requests 
 from flask import request
 import random
-from threading import Thread
+from threading import Thread, Event
 import queue
 import config
+import time
 
 ## Server conf ##
 server = flask.Flask('app', root_path=os.getcwd())
@@ -41,23 +42,27 @@ class Labeler():
             with open(path, 'r') as f:
                 data_json = json.load(f)
             self.labels_list = self.check_existence(data_json.get("labels_list"))
+            status = 400
+            while not status==200:
+                try:
+                    r = requests.post(config.TRAINER_IP+"/init_training", data=json.dumps({"labels_list": self.labels_list}))
+                    status = r.status_code
+                except:                 
+                    print("Waiting for the trainer to start")
+                    time.sleep(2)
             self.labels_selected = True
             self.unlabelled = self.check_existence(data_json.get("unlabelled"))
             if "labelled_data" in data_json:
                 data = data_json.get("labelled_data")
-                status = 400
-                while not status==200:
-                    r = requests.post(config.TRAINER_IP+"/train", data=json.dumps({"labelled_data": data, 
-                                                                             "labels_list": self.labels_list,
-                                                                             "unlabelled": self.unlabelled}))
-                    status = r.status_code
+                r = requests.post(config.TRAINER_IP+"/train", data=json.dumps({"labelled_data": data, 
+                                                                                "labels_list": self.labels_list,
+                                                                                "unlabelled": self.unlabelled}))               
             if "test_data" in data_json:
                 self.test_set_done = True
-                status = 400
-                while not status==200:
-                    r = requests.post(config.TRAINER_IP+"/test_data", data=json.dumps({"test_data": data_json["test_data"], 
-                                                                        "labels_list": data_json["labels_list"]}))
-                    status = r.status_code
+                r = requests.post(config.TRAINER_IP+"/test_data", data=json.dumps({"test_data": data_json["test_data"], 
+                                                                            "labels_list": data_json["labels_list"]}))
+
+
         self.trainer_inited = False
         self.images_tosend = []
         self.ground_truths = []
@@ -121,7 +126,19 @@ class SendTestSet(Thread):
         data = self.test_queue.get()
         r = requests.post(config.TRAINER_IP+"/test_data", data=json.dumps(data))
 
-## Object and threads init ##
+class SendStopSignal(Thread):
+    def __init__(self):
+        Thread.__init__(self, daemon=True)
+
+    def run(self):
+        StopSig.wait()
+        r = requests.post(config.TRAINER_IP+"/stop_training", data=json.dumps({}))
+        print("Trainer safely shut down")
+
+## Queue, Events and Threads init ##
+StopSig = Event()
+stopper = SendStopSignal()
+stopper.start()
 q_send = queue.Queue()
 test_queue = queue.Queue()
 sender = Sender(q_send)
@@ -145,9 +162,8 @@ def annotation_layout():
     return html.Div([                        
                     html.Div([html.Button(name1, id={'role': 'label-button', 'index': name1}, n_clicks=0) for name1 in labeler.labels_list], style=center_style),
                     html.Div([html.Img(id='image', style=image_style)], style=center_style),
-                    html.Div(html.Button("stop-signal", id="stop-signal57948", n_clicks=0), style=center_style)
+                    html.Div(dcc.Link(html.Button("stop-signal", id="stop-signal57948", n_clicks=0), href="/stop_training", refresh=True), style=center_style)
                     ])
-
 
 labels_layout = html.Div([html.H1("Input your labels", id="title1", style=center_style),  
                         html.Div([
@@ -158,6 +174,8 @@ labels_layout = html.Div([html.H1("Input your labels", id="title1", style=center
                         html.Div(id='label-submit',
                                         children='Enter a label and press submit', style=center_style)])
 
+end_layout = html.H1("You can close the Labeler and wait for the Trainer to save your model", id="end", style=center_style)
+
 ## Index layout ##
 app.layout = url_bar_and_content_div
 
@@ -167,7 +185,8 @@ static_image_route = "/static/"
 app.validation_layout = html.Div([
     url_bar_and_content_div,
     annotation_layout(),
-    labels_layout])
+    labels_layout,
+    end_layout])
 
 
 ## Flask routes ##
@@ -193,12 +212,14 @@ def serve_image(image_name):
         raise Exception(f'"{im_path}" is excluded from the allowed static files')
     return flask.send_file(im_path)
 
-@server.route("/stop_annotating")
-def serve_stop_image():
-    return flask.send_file("picsell_logo.png")
+
+@server.route("/stop_training", methods=["POST"])
+def stop():
+    return ""
 
 
 ## Dash callbacks ##
+
 
 # Index callbacks
 @app.callback(Output('page-content', 'children'),
@@ -206,6 +227,9 @@ def serve_stop_image():
 def display_page(pathname):
     if not labeler.labels_selected:
         return labels_layout
+    elif pathname=="/stop_training":
+        StopSig.set()
+        return end_layout
     else:
         if not labeler.trainer_inited:
             labeler.trainer_inited = True
@@ -244,7 +268,8 @@ def update(*n_clicks):
     changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0][:-9]
     if changed_id == "stop-signal57948":
         r = requests.post(config.TRAINER_IP+"/stop_training", data=json.dumps({}))
-        return "/stop_annotating"           
+        return "/stop_training"        
+
     elif len(changed_id)>0:
         changed_id = changed_id.split(",")[0].split(":")[1].strip('"')
         
@@ -280,7 +305,7 @@ def update(*n_clicks):
                 break
         if trigger:
             r = requests.post(config.TRAINER_IP+"/stop_training", data=json.dumps({}))
-            return "/stop_annotating"
+            return "/stop_training"
 
     if config.BUFFER_SIZE>len(labeler.ground_truths):
         return static_image_route + os.path.split(image)[1]
@@ -293,5 +318,5 @@ def update(*n_clicks):
 
 if __name__ == '__main__':
     # app.run_server(debug=True, use_reloader=False) #to not launch twice everything
-    app.run_server(host= '0.0.0.0', debug=True, port=3334)
+    app.run_server(host= '0.0.0.0', port=3334)
     

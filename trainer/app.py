@@ -100,7 +100,7 @@ class Trainer(Thread):
                     print("Evaluation result:")
                     for e,n in zip(evaluation, self.model.metrics_names):
                         print(f"{n} is {e}")
-                        tresh = config.EARLY_STOPPING_METRICS_TRESHOLDS.get(n)
+                        tresh = config.EARLY_STOPPING_METRICS_THRESHOLDS.get(n)
                         if tresh:
                             if e>=tresh:
                                 print(f"Treshold ({tresh}) reached for {n}")
@@ -112,7 +112,7 @@ class Trainer(Thread):
                         print("Sending query")
                         self.send_sorted_data(sorted_unlabelled_data) 
         print("Stopping")
-        self.model.save(config.SAVED_MODEL_DIR)
+        self.model.save(config.SAVED_MODEL_PATH)
         print("Model saved, you can safely shut down the server")
 
 # UTILS #
@@ -239,5 +239,5 @@ trainer = Trainer(train_queue, unlabelled_queue, test_queue)
 stopTrainer = Event()
 
 if __name__ == '__main__':
-    app.run(host="localhost", port=3333, debug=True, use_reloader=False)
+    app.run(host="localhost", port=3333)
     
