@@ -65,11 +65,8 @@ The most important variables to set up are :
 Other settings are available and described inside the file.
 
 #### Model, E/E strategy and query method
-- ``model_fn`` A function returning a compiled keras model :
- - setup_model(n_classes)
- - reload_model
-- ``uncertainty_measure`` The query method used. You can select one from the trainer/uncertainty_measures or define your own.
-- ``ee_strat`` The exploration/exploitation strategy. You can select one from the trainer/ee_strats model or defien your own.
+- ``model_fn`` A function returning a compiled keras model. By default you are given a basic test model and a reload model function.
+- ``ee_strat`` The exploration/exploitation strategy. You can select one from the trainer/ee_strats.py module or define your own.
 
 ## Roadmap
 
