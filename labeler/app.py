@@ -6,7 +6,7 @@ import flask
 import os
 import numpy as np
 import json
-import requests 
+import requests
 from flask import request
 import random
 from threading import Thread, Event
@@ -18,7 +18,7 @@ import time
 server = flask.Flask('app', root_path=os.getcwd())
 external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
 app = dash.Dash('app', server=server, external_stylesheets=external_stylesheets)
-
+app.title = 'Labeler'
 ## Labeler class definition ##
 
 
@@ -29,15 +29,15 @@ class Labeler():
         if not os.path.isfile(path):
             self.unlabelled = self.configure_dir(png_dir=self.png_dir)
             random.shuffle(self.unlabelled)
-            self.test_set = self.unlabelled[:int(config.TEST_SET_FRAC*len(self.unlabelled))] 
+            self.test_set = self.unlabelled[:int(config.TEST_SET_FRAC*len(self.unlabelled))]
             self.test_set_done = False
             self.test_set_iter = np.nditer([self.test_set])
             self.test_set_gt = []
             [self.unlabelled.remove(p) for p in self.test_set if p in self.unlabelled]
             self.labels_list = []
-            
+
             self.labels_selected = False
-            
+
         else:
             with open(path, 'r') as f:
                 data_json = json.load(f)
@@ -47,19 +47,19 @@ class Labeler():
                 try:
                     r = requests.post(config.TRAINER_IP+"/init_training", data=json.dumps({"labels_list": self.labels_list}))
                     status = r.status_code
-                except:                 
+                except:
                     print("Waiting for the trainer to start")
                     time.sleep(2)
             self.labels_selected = True
             self.unlabelled = self.check_existence(data_json.get("unlabelled"))
             if "labelled_data" in data_json:
                 data = data_json.get("labelled_data")
-                r = requests.post(config.TRAINER_IP+"/train", data=json.dumps({"labelled_data": data, 
+                r = requests.post(config.TRAINER_IP+"/train", data=json.dumps({"labelled_data": data,
                                                                                 "labels_list": self.labels_list,
-                                                                                "unlabelled": self.unlabelled}))               
+                                                                                "unlabelled": self.unlabelled}))
             if "test_data" in data_json:
                 self.test_set_done = True
-                r = requests.post(config.TRAINER_IP+"/test_data", data=json.dumps({"test_data": data_json["test_data"], 
+                r = requests.post(config.TRAINER_IP+"/test_data", data=json.dumps({"test_data": data_json["test_data"],
                                                                             "labels_list": data_json["labels_list"]}))
 
 
@@ -74,16 +74,16 @@ class Labeler():
             return data
         else:
             return data
-        
+
 
     def configure_dir(self, png_dir):
         for file in os.listdir(png_dir):
             if not file.endswith((".png", ".jpg", ".PNG", ".JPG")):
-                raise ValueError("Your PNG_DIR does not contain only png or jpg, please clean it")               
+                raise ValueError("Your PNG_DIR does not contain only png or jpg, please clean it")
         print("Images directory checked")
-        
+
         return [os.path.join(png_dir, x) for x in os.listdir(png_dir)]
-    
+
     def configure_labelmap(self):
         self.labelmap = {}
         for i, l in enumerate(self.labels_list):
@@ -94,9 +94,9 @@ class Labeler():
         self.iter_images = np.nditer([self.unlabelled])
 
     def prep_send_data(self):
-        '''reqs = {"labelled_data": [impaths, labels] 
+        '''reqs = {"labelled_data": [impaths, labels]
                 "labels_list": self explanatory
-                "unlabelled": [impaths] }'''      
+                "unlabelled": [impaths] }'''
         to_keep = self.images_tosend.pop()
         [self.unlabelled.remove(p) for p in self.images_tosend if p in self.unlabelled]
         print(f"Number of images to annotate remaining: {len(self.unlabelled)}")
@@ -159,13 +159,13 @@ url_bar_and_content_div = html.Div([
 
 
 def annotation_layout():
-    return html.Div([                        
+    return html.Div([
                     html.Div([html.Button(name1, id={'role': 'label-button', 'index': name1}, n_clicks=0) for name1 in labeler.labels_list], style=center_style),
                     html.Div([html.Img(id='image', style=image_style)], style=center_style),
                     html.Div(dcc.Link(html.Button("stop-signal", id="stop-signal57948", n_clicks=0), href="/stop_training", refresh=True), style=center_style)
                     ])
 
-labels_layout = html.Div([html.H1("Input your labels", id="title1", style=center_style),  
+labels_layout = html.Div([html.H1("Input your labels", id="title1", style=center_style),
                         html.Div([
                         dcc.Input(id='input-on-submit', type='text', autoFocus=True),
                                 html.Button('Add Label', id="new-label", n_clicks=0),
@@ -237,7 +237,7 @@ def display_page(pathname):
         labeler.configure_labelmap()
         layout = annotation_layout()
         return layout
-        
+
 # Labels input
 @app.callback(Output('label-submit', 'children'),
     [Input('new-label', 'n_clicks')],
@@ -268,11 +268,11 @@ def update(*n_clicks):
     changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0][:-9]
     if changed_id == "stop-signal57948":
         r = requests.post(config.TRAINER_IP+"/stop_training", data=json.dumps({}))
-        return "/stop_training"        
+        return "/stop_training"
 
     elif len(changed_id)>0:
         changed_id = changed_id.split(",")[0].split(":")[1].strip('"')
-        
+
 
     if not labeler.test_set_done:
         try:
@@ -287,7 +287,7 @@ def update(*n_clicks):
         if labeler.test_set_done:
             print("Sending test data")
             # to_send = [config.IMAGE_DIRECTORY+x for x in labeler.test_set]
-            data = {"test_data": (labeler.test_set, labeler.test_set_gt), 
+            data = {"test_data": (labeler.test_set, labeler.test_set_gt),
                     "labels_list": labeler.labels_list}
             test_queue.put(data)
 
@@ -298,7 +298,7 @@ def update(*n_clicks):
             trigger = False
         except StopIteration:
             trigger = True
-    
+
         for label in labeler.labels_list:
             if label == changed_id:
                 labeler.ground_truths.append(labeler.labelmap[label])
@@ -314,9 +314,8 @@ def update(*n_clicks):
         q_send.put(data)
         return static_image_route + os.path.split(image)[1]
 
-    
+
 
 if __name__ == '__main__':
     # app.run_server(debug=True, use_reloader=False) #to not launch twice everything
     app.run_server(host= '0.0.0.0', port=3334)
-    
