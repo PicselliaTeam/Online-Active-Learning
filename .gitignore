@@ -1,11 +1,10 @@
 assets/
-web/.picsellia
+images/*
 *.pyc
 __pycache__
 *.ipynb
 .ipynb_checkpoints
-*.jpg
-*.png
+
 
 vv/
 # Byte-compiled / optimized / DLL files
