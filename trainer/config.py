@@ -30,7 +30,7 @@ INPUT_SHAPE = (224, 224)
 NUM_EPOCHS_PER_LOOP = 5
 
 ## Keras model.fit verbosity level
-TRAINING_VERBOSITY = 0
+TRAINING_VERBOSITY = 2
 
 ## Save directory for the annotations
 ## Should be the same as the one from the Labeler configuration.
