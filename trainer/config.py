@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.applications import MobileNetV2
-import uncertainty_measures
+from functools import partial
 import ee_strats
 
 
@@ -68,8 +68,7 @@ model_fn = setup_model
 # model_fn = reload_model  # Use this if you want to reload the previous model.
 
 
-## Choose your uncertainty measure from the uncertainty_measures module
-uncertainty_measure = uncertainty_measures.SumEntropy
 
-## Choose your EE strat from the ee_strats module
-ee_strat = ee_strats.sort_decreasingly
+## Choose your Exploration/Exploitation strat from the ee_strats module
+## This base strat use a random entropy sampling with a probability of 0.5.
+ee_strat = partial(ee_strats.random_entropy_sampling, p=0.5)

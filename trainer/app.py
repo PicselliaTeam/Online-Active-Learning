@@ -13,7 +13,7 @@ import config
 app = Flask(__name__)
 
 
-# TRAINER and FEEDER CLASSES #
+# TRAINER CLASS #
 class Trainer(Thread):
 
     def __init__(self, trainable_queue, unlabelled_queue, test_queue, daemon=True):
@@ -42,8 +42,7 @@ class Trainer(Thread):
     def send_sorted_data(self, data):
         r = requests.post(config.LABELER_IP+"/retrieve_query", data=json.dumps(data))
 
-    def make_query(self, data,
-                uncertainty_measure=config.uncertainty_measure, EEstrat=config.ee_strat):
+    def make_query(self, data, EEstrat=config.ee_strat):
         dict_keys = ["filename", "score"]
         list_of_score_dicts = []
         dataset = data[0]
@@ -51,7 +50,7 @@ class Trainer(Thread):
         preds = self.model.predict(dataset)
         for i,p in enumerate(preds):
             score_dict = dict.fromkeys(dict_keys)
-            score_dict["score"] = uncertainty_measure(p)
+            score_dict["score"] = p 
             score_dict["filename"] = filenames[i]
             list_of_score_dicts.append(score_dict)
         return EEstrat(list_of_score_dicts)
