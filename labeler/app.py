@@ -25,6 +25,8 @@ app.title = 'Labeler'
 class Labeler():
     def __init__(self, png_dir):
         self.png_dir = png_dir
+        self.trainer_stopped = False
+        self.no_images_left = False
         path = os.path.join(config.ANNOTATIONS_SAVE_PATH, "annotations.json")
         if not os.path.isfile(path):
             self.unlabelled = self.configure_dir(png_dir=self.png_dir)
@@ -42,26 +44,34 @@ class Labeler():
             with open(path, 'r') as f:
                 data_json = json.load(f)
             self.labels_list = self.check_existence(data_json.get("labels_list"))
-            status = 400
-            while not status==200:
-                try:
-                    r = requests.post(config.TRAINER_IP+"/init_training", data=json.dumps({"labels_list": self.labels_list}))
-                    status = r.status_code
-                except:
-                    print("Waiting for the trainer to start")
-                    time.sleep(2)
-            self.labels_selected = True
+            if len(self.labels_list) > 0:
+                status = 400
+                while not status==200:
+                    try:
+                        r = requests.post(config.TRAINER_IP+"/init_training", data=json.dumps({"labels_list": self.labels_list}))
+                        status = r.status_code
+                    except:
+                        print("Waiting for the trainer to start")
+                        time.sleep(2)
+                self.labels_selected = True
             self.unlabelled = self.check_existence(data_json.get("unlabelled"))
-            if "labelled_data" in data_json:
-                data = data_json.get("labelled_data")
-                r = requests.post(config.TRAINER_IP+"/train", data=json.dumps({"labelled_data": data,
-                                                                                "labels_list": self.labels_list,
-                                                                                "unlabelled": self.unlabelled}))
+            if len(self.unlabelled) > 0:
+                if "labelled_data" in data_json:
+                    data = data_json.get("labelled_data")
+                    requests.post(config.TRAINER_IP+"/train", data=json.dumps({"labelled_data": data,
+                                                                                    "labels_list": self.labels_list,
+                                                                                    "unlabelled": self.unlabelled}))
+            else:
+                self.unlabelled = self.configure_dir(png_dir=self.png_dir)
+                random.shuffle(self.unlabelled)
+            
             if "test_data" in data_json:
-                self.test_set_done = True
-                r = requests.post(config.TRAINER_IP+"/test_data", data=json.dumps({"test_data": data_json["test_data"],
-                                                                            "labels_list": data_json["labels_list"]}))
 
+                self.test_set_done = True
+                requests.post(config.TRAINER_IP+"/test_data", data=json.dumps({"test_data": data_json["test_data"],
+                                                                          "labels_list": data_json["labels_list"]}))
+            else:
+                self.test_set_done = False
 
         self.trainer_inited = False
         self.images_tosend = []
@@ -74,7 +84,6 @@ class Labeler():
             return data
         else:
             return data
-
 
     def configure_dir(self, png_dir):
         for file in os.listdir(png_dir):
@@ -100,11 +109,20 @@ class Labeler():
         to_keep = self.images_tosend.pop()
         [self.unlabelled.remove(p) for p in self.images_tosend if p in self.unlabelled]
         print(f"Number of images to annotate remaining: {len(self.unlabelled)}")
-        # to_send_1 = [config.IMAGE_DIRECTORY+x for x in self.images_tosend]
-        # to_send_2 = [config.IMAGE_DIRECTORY+x for x in self.unlabelled]
         data = {"labelled_data": (self.images_tosend, self.ground_truths), "labels_list": self.labels_list, "unlabelled": self.unlabelled}
         self.ground_truths = []
         self.images_tosend = [to_keep]
+        return data
+    
+    def prep_send_last_data(self):
+        '''reqs = {"labelled_data": [impaths, labels]
+                "labels_list": self explanatory
+                "unlabelled": [impaths] }'''
+        [self.unlabelled.remove(p) for p in self.images_tosend if p in self.unlabelled]
+        print(f"Number of images to annotate remaining: {len(self.unlabelled)}")
+        data = {"labelled_data": (self.images_tosend, self.ground_truths), "labels_list": self.labels_list, "unlabelled": self.unlabelled}
+        self.ground_truths = []
+        self.images_tosend = []
         return data
 
 class Sender(Thread):
@@ -131,12 +149,12 @@ class SendStopSignal(Thread):
         Thread.__init__(self, daemon=True)
 
     def run(self):
-        StopSig.wait()
-        r = requests.post(config.TRAINER_IP+"/stop_training", data=json.dumps({}))
+        data = q_stop.get()
+        requests.post(config.TRAINER_IP+"/stop_training", data=json.dumps(data))
         print("Trainer safely shut down")
 
 ## Queue, Events and Threads init ##
-StopSig = Event()
+q_stop = queue.Queue()
 stopper = SendStopSignal()
 stopper.start()
 q_send = queue.Queue()
@@ -174,19 +192,20 @@ labels_layout = html.Div([html.H1("Input your labels", id="title1", style=center
                         html.Div(id='label-submit',
                                         children='Enter a label and press submit', style=center_style)])
 
-end_layout = html.H1("You can close the Labeler and wait for the Trainer to save your model", id="end", style=center_style)
+stop_training_layout = html.H1("You can close the Labeler and wait for the Trainer to save your model", id="end-training", style=center_style)
+stop_annotate_layout = html.Div([html.H1("You have annotated every image of your dataset, stop the training whenever you want", id="end-annotate", style=center_style),
+                        html.Div(dcc.Link(html.Button("stop-signal", id="stop-signal57950", n_clicks=0), href="/stop_training", refresh=True), style=center_style)])
 
 ## Index layout ##
 app.layout = url_bar_and_content_div
 
-## Finished layout ##
-static_image_route = "/static/"
 ## Complete layout ##
 app.validation_layout = html.Div([
     url_bar_and_content_div,
     annotation_layout(),
     labels_layout,
-    end_layout])
+    stop_training_layout,
+    stop_annotate_layout])
 
 
 ## Flask routes ##
@@ -200,14 +219,15 @@ def retrieve_data():
     return ""
 
 
-@server.route(f'{static_image_route}/<image_name>')
+@server.route(f'{static_image_route}<image_name>')
 def serve_image(image_name):
+    # if image_name == "stop_annotate":
+    #     return flask.send_file("labeler/no_images_left.png")
     im_path = os.path.join(config.IMAGE_DIRECTORY, image_name)
     if hasattr(labeler, "test_set"):
         paths = labeler.unlabelled+labeler.test_set
     else:
         paths = labeler.unlabelled
-
     if im_path not in paths:
         raise Exception(f'"{im_path}" is excluded from the allowed static files')
     return flask.send_file(im_path)
@@ -217,6 +237,11 @@ def serve_image(image_name):
 def stop():
     return ""
 
+@server.route("/stop_annotate")
+def stop2():
+    print("sending png")
+    return flask.send_file("labeler/no_images_left.png")
+
 
 ## Dash callbacks ##
 
@@ -225,18 +250,27 @@ def stop():
 @app.callback(Output('page-content', 'children'),
               [Input('url', 'pathname')])
 def display_page(pathname):
-    if not labeler.labels_selected:
-        return labels_layout
-    elif pathname=="/stop_training":
-        StopSig.set()
-        return end_layout
-    else:
-        if not labeler.trainer_inited:
-            labeler.trainer_inited = True
-            r = requests.post(config.TRAINER_IP+"/init_training", data=json.dumps({"labels_list": labeler.labels_list}))
-        labeler.configure_labelmap()
-        layout = annotation_layout()
-        return layout
+    if not labeler.trainer_stopped:
+        if not labeler.labels_selected:
+            return labels_layout
+        elif pathname=="/stop_training":
+            print("Stopping training")
+            try:
+                data = labeler.prep_send_data()
+            except:
+                data = {}
+            q_stop.put(data)
+            labeler.trainer_stopped = True
+            return stop_training_layout
+        else:
+            if not labeler.trainer_inited:
+                labeler.trainer_inited = True
+                requests.post(config.TRAINER_IP+"/init_training", data=json.dumps({"labels_list": labeler.labels_list}))
+            labeler.configure_labelmap()
+            layout = annotation_layout()
+            return layout
+    if labeler.trainer_stopped:
+        return stop_training_layout
 
 # Labels input
 @app.callback(Output('label-submit', 'children'),
@@ -258,21 +292,16 @@ def form(n_clicks, value):
         return ""
 
 
-
-
+# End layout callback 
+# @app.callback(Output())
 
 # Show and annotate images
 @app.callback(Output('image', 'src'),
-     [Input({'role': 'label-button', 'index': ALL}, "n_clicks"), Input("stop-signal57948", "n_clicks")])
+     [Input({'role': 'label-button', 'index': ALL}, "n_clicks")])
 def update(*n_clicks):
     changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0][:-9]
-    if changed_id == "stop-signal57948":
-        r = requests.post(config.TRAINER_IP+"/stop_training", data=json.dumps({}))
-        return "/stop_training"
-
-    elif len(changed_id)>0:
+    if len(changed_id)>0:
         changed_id = changed_id.split(",")[0].split(":")[1].strip('"')
-
 
     if not labeler.test_set_done:
         try:
@@ -286,7 +315,6 @@ def update(*n_clicks):
                 break
         if labeler.test_set_done:
             print("Sending test data")
-            # to_send = [config.IMAGE_DIRECTORY+x for x in labeler.test_set]
             data = {"test_data": (labeler.test_set, labeler.test_set_gt),
                     "labels_list": labeler.labels_list}
             test_queue.put(data)
@@ -304,8 +332,12 @@ def update(*n_clicks):
                 labeler.ground_truths.append(labeler.labelmap[label])
                 break
         if trigger:
-            r = requests.post(config.TRAINER_IP+"/stop_training", data=json.dumps({}))
-            return "/stop_training"
+            print("No images left to annotate")
+            if not labeler.no_images_left:
+                labeler.no_images_left = True
+                data = labeler.prep_send_last_data()
+                q_send.put(data)
+            return "/stop_annotate"
 
     if config.BUFFER_SIZE>len(labeler.ground_truths):
         return static_image_route + os.path.split(image)[1]
@@ -317,5 +349,4 @@ def update(*n_clicks):
 
 
 if __name__ == '__main__':
-    # app.run_server(debug=True, use_reloader=False) #to not launch twice everything
     app.run_server(host= '0.0.0.0', port=3334)

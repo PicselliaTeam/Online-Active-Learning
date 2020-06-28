@@ -10,7 +10,7 @@ import random
 def entropy_sampling(list_of_preds_dicts):
     '''Exploration only strategy based on the entropy of a prediction'''
     def sum_entropy(pred):
-    '''Calculate the sum of the entropies of each probabilites for a given prediction'''
+        '''Calculate the sum of the entropies of each probabilites for a given prediction'''
         def entropy(prob):
             if prob==0:
                 return 0
@@ -23,7 +23,7 @@ def entropy_sampling(list_of_preds_dicts):
     return sorted(list_of_preds_dicts, key = lambda i: (i["score"]), reverse=True)
 
 
-def random_entropy_sampling(list_of_preds_dicts, p)
+def random_entropy_sampling(list_of_preds_dicts, p):
     '''EE strategy combining Entropy Sampling (exploration) with random sampling (exploitation)
         p represents the probability to explore the data, 1-p to exploit'''
     entropy_list = entropy_sampling(list_of_preds_dicts)

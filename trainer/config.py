@@ -39,6 +39,8 @@ ANNOTATIONS_SAVE_PATH = "./annotations"
 ## Save directory for the keras model
 SAVED_MODEL_PATH = "./saved_model"
 
+## Force tensorflow to use the CPU
+FORCE_ON_CPU = True
 
 def setup_model(num_classes, input_shape=INPUT_SHAPE+(3,)):
     '''Defines a basic test model.'''

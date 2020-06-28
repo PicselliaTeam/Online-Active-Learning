@@ -12,12 +12,16 @@ import config
 
 app = Flask(__name__)
 
+if config.FORCE_ON_CPU:
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID" 
+    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 # TRAINER CLASS #
 class Trainer(Thread):
 
     def __init__(self, trainable_queue, unlabelled_queue, test_queue, daemon=True):
         Thread.__init__(self, daemon=daemon)
+
         self.train_queue = train_queue
         self.unlabelled_queue = unlabelled_queue
         self.test_queue = test_queue
@@ -62,13 +66,19 @@ class Trainer(Thread):
             while self.train_queue.qsize() > 0 or k==0:
                 k+=1
                 self.eval_and_query_countdown+=1
-                temp.append(self.train_queue.get())
-            train_set = temp[0]
-            if len(temp)>1:
-                for k in range(len(temp)-1):
-                    train_set.concatenate(temp[k+1])
-            print(f"We got fed new training data! Number of requests before new evaluation and query : {config.EVAL_AND_QUERY_EVERY-self.eval_and_query_countdown}")
-            return train_set
+                to_append = self.train_queue.get()
+                temp.append(to_append)
+
+            if not "stop" in temp:
+                train_set = temp[0]
+                if len(temp)>1:
+                    for k in range(len(temp)-1):
+                        train_set.concatenate(temp[k+1])
+                print(f"We got fed new training data! Number of requests before new evaluation and query : {config.EVAL_AND_QUERY_EVERY-self.eval_and_query_countdown}")
+                return train_set
+            if "stop" in temp:
+                return "stop"
+
         else:
             return previous_train_set
 
@@ -82,13 +92,21 @@ class Trainer(Thread):
     def run(self):
         print("Waiting for the test set")
         test_set = self.test_queue.get()
-        print("Test set acquired, starting training")
+        print("Test set acquired")
         while not stopTrainer.is_set():
-            if self.first_iter:
-                self.first_iter = False
+            if self.first_iter:               
+                print("Waiting for the first training data")
                 train_set = self.update_train_set()
+                if train_set == "stop":
+                    print("Stopping before the first training data batch was received")
+                    break
+                self.first_iter = False
+                print("First training data acquired")
             else:
-                train_set.concatenate(self.update_train_set(train_set))
+                to_concat = self.update_train_set(train_set)
+                if to_concat == "stop":
+                    break
+                train_set.concatenate(to_concat)
             self.model.fit(train_set, epochs=config.NUM_EPOCHS_PER_LOOP, verbose=config.TRAINING_VERBOSITY)
             if self.unlabelled_queue.qsize() > 0:
                 unlabelled_data = self.update_unlabelled_data()
@@ -131,7 +149,7 @@ def save_test_data(data):
     with open(path, "w") as f:
         json.dump(data, f)
 
-
+ 
 def save_training_annotations(data):
     if not os.path.isdir(config.ANNOTATIONS_SAVE_PATH):
         os.mkdir(config.ANNOTATIONS_SAVE_PATH)
@@ -186,8 +204,15 @@ def feed_query_data(data):
 
 @app.route("/stop_training", methods=["POST"])
 def stop_training():
+    data = json.loads(request.data)
+    if not data == {}:
+        save_training_annotations(data)
     if trainer.started:
         stopTrainer.set()
+        if trainer.first_iter == True:
+            stop_msg = "stop"
+            #TODO: Add dummy test queue filler in case stopping before having send test data
+            train_queue.put(stop_msg)
         trainer.join()
     return "Training Stopped"
 
@@ -216,7 +241,8 @@ def retrieve_data():
     data = json.loads(request.data)
     save_training_annotations(data)
     feed_training_data(data["labelled_data"], data["labels_list"])
-    feed_query_data(data["unlabelled"])
+    if len(data["unlabelled"]) > 0:
+        feed_query_data(data["unlabelled"])
     return ""
 
 @app.route("/test_data", methods=["POST"])
