@@ -19,14 +19,14 @@ server = flask.Flask('app', root_path=os.getcwd())
 external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
 app = dash.Dash('app', server=server, external_stylesheets=external_stylesheets)
 app.title = 'Labeler'
+
 ## Labeler class definition ##
-
-
 class Labeler():
     def __init__(self, png_dir):
         self.png_dir = png_dir
         self.trainer_stopped = False
         self.no_images_left = False
+        self.early_stopped = False
         path = os.path.join(config.ANNOTATIONS_SAVE_PATH, "annotations.json")
         if not os.path.isfile(path):
             self.unlabelled = self.configure_dir(png_dir=self.png_dir)
@@ -180,7 +180,7 @@ def annotation_layout():
     return html.Div([
                     html.Div([html.Button(name1, id={'role': 'label-button', 'index': name1}, n_clicks=0) for name1 in labeler.labels_list], style=center_style),
                     html.Div([html.Img(id='image', style=image_style)], style=center_style),
-                    html.Div(dcc.Link(html.Button("stop-signal", id="stop-signal57948", n_clicks=0), href="/stop_training", refresh=True), style=center_style)
+                    html.Div(dcc.Link(html.Button("stop signal and save annotations", id="stop-signal57948", n_clicks=0), href="/stop_training", refresh=True), style=center_style)
                     ])
 
 labels_layout = html.Div([html.H1("Input your labels", id="title1", style=center_style),
@@ -193,8 +193,6 @@ labels_layout = html.Div([html.H1("Input your labels", id="title1", style=center
                                         children='Enter a label and press submit', style=center_style)])
 
 stop_training_layout = html.H1("You can close the Labeler and wait for the Trainer to save your model", id="end-training", style=center_style)
-stop_annotate_layout = html.Div([html.H1("You have annotated every image of your dataset, stop the training whenever you want", id="end-annotate", style=center_style),
-                        html.Div(dcc.Link(html.Button("stop-signal", id="stop-signal57950", n_clicks=0), href="/stop_training", refresh=True), style=center_style)])
 
 ## Index layout ##
 app.layout = url_bar_and_content_div
@@ -204,8 +202,7 @@ app.validation_layout = html.Div([
     url_bar_and_content_div,
     annotation_layout(),
     labels_layout,
-    stop_training_layout,
-    stop_annotate_layout])
+    stop_training_layout])
 
 
 ## Flask routes ##
@@ -221,8 +218,6 @@ def retrieve_data():
 
 @server.route(f'{static_image_route}<image_name>')
 def serve_image(image_name):
-    # if image_name == "stop_annotate":
-    #     return flask.send_file("labeler/no_images_left.png")
     im_path = os.path.join(config.IMAGE_DIRECTORY, image_name)
     if hasattr(labeler, "test_set"):
         paths = labeler.unlabelled+labeler.test_set
@@ -232,16 +227,24 @@ def serve_image(image_name):
         raise Exception(f'"{im_path}" is excluded from the allowed static files')
     return flask.send_file(im_path)
 
-
-@server.route("/stop_training", methods=["POST"])
-def stop():
-    return ""
-
 @server.route("/stop_annotate")
-def stop2():
-    print("sending png")
+def serve_meme_image():
     return flask.send_file("labeler/no_images_left.png")
 
+@server.route("/serve_early_stopping")
+def server_meme_image():
+        return flask.send_file("labeler/early_stopping.png")
+
+@server.route("/early_stopping", methods=["POST"])
+def stop_training():
+    print("The trainer stopped itself via early stopping")
+    try:
+        data = labeler.prep_send_data()
+    except:
+        data = {}
+    q_stop.put(data)
+    labeler.early_stopped = True
+    return ""
 
 ## Dash callbacks ##
 
@@ -292,13 +295,13 @@ def form(n_clicks, value):
         return ""
 
 
-# End layout callback 
-# @app.callback(Output())
 
 # Show and annotate images
 @app.callback(Output('image', 'src'),
      [Input({'role': 'label-button', 'index': ALL}, "n_clicks")])
 def update(*n_clicks):
+    if labeler.early_stopped == True:
+        return "/serve_early_stopping"
     changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0][:-9]
     if len(changed_id)>0:
         changed_id = changed_id.split(",")[0].split(":")[1].strip('"')

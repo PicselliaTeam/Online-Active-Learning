@@ -19,10 +19,11 @@ SHUFFLE_BUFFER_SIZE = 1000
 ## Set an early stopping treshold per metric. Dict of metrics as keys and thresholds as values.
 ## You can skip some metrics if you want to. We can also define a threshold for the "loss".
 ## If you don't want early stopping logic, set the variable to an empty dict
-EARLY_STOPPING_METRICS_THRESHOLDS = {"accuracy": 0.95}
+EARLY_STOPPING_METRICS_THRESHOLDS = {"accuracy": [0.95, "upper_bound"],
+                                        "loss": [0, "lower_bound"]}
 
 ## Evaluate and make query every x batches sent by the labeler
-EVAL_AND_QUERY_EVERY = 15
+EVAL_AND_QUERY_EVERY = 1
 ## Model input shape
 INPUT_SHAPE = (224, 224)
 

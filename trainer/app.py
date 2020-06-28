@@ -117,17 +117,25 @@ class Trainer(Thread):
                     print("Evaluation result:")
                     for e,n in zip(evaluation, self.model.metrics_names):
                         print(f"{n} is {e}")
-                        tresh = config.EARLY_STOPPING_METRICS_THRESHOLDS.get(n)
-                        if tresh:
-                            if e>=tresh:
-                                print(f"Treshold ({tresh}) reached for {n}")
+                        thresh = config.EARLY_STOPPING_METRICS_THRESHOLDS.get(n)
+                        if thresh:
+                            if thresh[1]=="upper_bound":
+                                trigger = e>=thresh[0]
+                            elif thresh[1]=="lower_bound":
+                                trigger = e<=thresh[0]
+                            if trigger:
+                                print(f"Treshold ({thresh[0]}) reached for {n}")
                                 stopTrainer.set()
+                                requests.post(config.LABELER_IP+"/early_stopping", data={})
                                 ## Add stopped request to labeler
                     if not stopTrainer.is_set():
                         print("Starting predictions")
                         sorted_unlabelled_data = self.make_query(unlabelled_data)  
                         print("Sending query")
                         self.send_sorted_data(sorted_unlabelled_data) 
+        print("Running last evaluation")
+        evaluation = self.model.evaluate(test_set)
+        print(evaluation)
         print("Stopping")
         self.model.save(config.SAVED_MODEL_PATH)
         print("Model saved, you can safely shut down the server")
