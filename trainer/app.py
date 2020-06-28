@@ -26,7 +26,8 @@ class Trainer(Thread):
         self.unlabelled_queue = unlabelled_queue
         self.test_queue = test_queue
         self.started = False
-        self.eval_and_query_countdown = 0
+        self.query_countdown = 0
+        self.eval_countdown = 0
 
     def init(self, model):
         self.model = model
@@ -44,7 +45,7 @@ class Trainer(Thread):
         return sorted(list_of_score_dicts, key = lambda i: (i["score"]), reverse=True)
 
     def send_sorted_data(self, data):
-        r = requests.post(config.LABELER_IP+"/retrieve_query", data=json.dumps(data))
+        requests.post(config.LABELER_IP+"/retrieve_query", data=json.dumps(data))
 
     def make_query(self, data, EEstrat=config.ee_strat):
         dict_keys = ["filename", "score"]
@@ -63,22 +64,27 @@ class Trainer(Thread):
         if self.train_queue.qsize()>0 or previous_train_set==None:
             temp = []
             k = 0
+            if self.train_queue.qsize()==0:
+                print("Waiting for new training data")
             while self.train_queue.qsize() > 0 or k==0:
                 k+=1
-                self.eval_and_query_countdown+=1
+                self.query_countdown+=1
+                self.eval_countdown+=1
                 to_append = self.train_queue.get()
                 temp.append(to_append)
 
             if not "stop" in temp:
                 train_set = temp[0]
+                if previous_train_set:
+                    train_set.concatenate(previous_train_set)
                 if len(temp)>1:
                     for k in range(len(temp)-1):
                         train_set.concatenate(temp[k+1])
-                print(f"We got fed new training data! Number of requests before new evaluation and query : {config.EVAL_AND_QUERY_EVERY-self.eval_and_query_countdown}")
+                print(f"We got fed new training data! Number of requests before evaluation : {config.EVAL_EVERY-self.eval_countdown} and before query : {config.QUERY_EVERY-self.query_countdown}")
+
                 return train_set
             if "stop" in temp:
                 return "stop"
-
         else:
             return previous_train_set
 
@@ -95,24 +101,30 @@ class Trainer(Thread):
         print("Test set acquired")
         while not stopTrainer.is_set():
             if self.first_iter:               
-                print("Waiting for the first training data")
                 train_set = self.update_train_set()
                 if train_set == "stop":
                     print("Stopping before the first training data batch was received")
                     break
                 self.first_iter = False
-                print("First training data acquired")
             else:
-                to_concat = self.update_train_set(train_set)
-                if to_concat == "stop":
-                    break
-                train_set.concatenate(to_concat)
+                if config.TRAIN_CONTINUOUSLY:
+                    new_data = self.update_train_set(train_set)
+                    if new_data == "stop":
+                        break
+                    train_set = new_data
+                else:
+                    to_concat = self.update_train_set()
+                    if to_concat == "stop":
+                        break
+                    train_set.concatenate(to_concat)
+
+                
             self.model.fit(train_set, epochs=config.NUM_EPOCHS_PER_LOOP, verbose=config.TRAINING_VERBOSITY)
             if self.unlabelled_queue.qsize() > 0:
                 unlabelled_data = self.update_unlabelled_data()
-                if self.eval_and_query_countdown >= config.EVAL_AND_QUERY_EVERY:
+                if  self.eval_countdown >= config.EVAL_EVERY:
                     print("Model evaluation")
-                    self.eval_and_query_countdown = 0
+                    self.eval_countdown = 0
                     evaluation = self.model.evaluate(test_set)
                     print("Evaluation result:")
                     for e,n in zip(evaluation, self.model.metrics_names):
@@ -127,12 +139,13 @@ class Trainer(Thread):
                                 print(f"Treshold ({thresh[0]}) reached for {n}")
                                 stopTrainer.set()
                                 requests.post(config.LABELER_IP+"/early_stopping", data={})
-                                ## Add stopped request to labeler
-                    if not stopTrainer.is_set():
+
+                    if not stopTrainer.is_set() and self.query_countdown >= config.QUERY_EVERY:
+                        self.query_countdown = 0
                         print("Starting predictions")
                         sorted_unlabelled_data = self.make_query(unlabelled_data)  
                         print("Sending query")
-                        self.send_sorted_data(sorted_unlabelled_data) 
+                        self.send_sorted_data(sorted_unlabelled_data)
         print("Running last evaluation")
         evaluation = self.model.evaluate(test_set)
         print(evaluation)

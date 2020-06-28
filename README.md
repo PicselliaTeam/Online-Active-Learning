@@ -64,16 +64,31 @@ The most important variables to set up are :
 
 Other settings are available and described inside the file.
 
-#### Model, E/E strategy and query method
+#### Model and exploration/exploitation strategy
 - ``model_fn`` A function returning a compiled keras model. By default you are given a basic test model and a reload model function.
-- ``ee_strat`` The exploration/exploitation strategy. You can select one from the trainer/ee_strats.py module or define your own.
+- ``ee_strat`` The exploration/exploitation strategy. You can select one from the trainer/ee_strats module or define your own.
+
+
+## Supported Active learning strategies
+
+* Uncertainty sampling
+    - Entropy sampling
+    - Least confidence sampling
+    - Margin of confidence sampling
+    - Ratio of confidence sampling
+
+* Diversity sampling
+    - Currently none
+
+* Randomized version of each sampling (probability p to use the sampling and 1-p to take a random sample)
 
 ## Roadmap
 
 ### Core updates
 - [x] Initial release
 - [ ] Bug hunting
-- [ ] Add more E/E strategies and query methods
+- [ ] Add more active learning strategies 
+- [ ] Add 
 - [ ] Add support for object-detection when the Tensorflow Object Detection API is updated to tensorflow 2 !!
 - [ ] Any other requested feature
 
