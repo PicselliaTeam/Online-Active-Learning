@@ -51,7 +51,7 @@ def ratio_of_confidence(list_of_preds_dicts):
 
 def randomize_sampling(list_of_preds_dicts, sampling, p):
     '''EE strategy combining an uncertainty sampling method with random sampling in order to not get stuck around the decision boundary 
-        p represents the probability to explore the data, 1-p to exploit.'''
+        p represents the probability to exploit the data, 1-p to explore.'''
     sampled_list = sampling(list_of_preds_dicts)
     random_list = list_of_preds_dicts[:]
     random.shuffle(random_list)
