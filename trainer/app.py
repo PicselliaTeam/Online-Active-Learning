@@ -196,7 +196,7 @@ def dataset_set_creation(data, num_classes):
         img = decode_img(file_path)
         label = tf.one_hot(label, depth=num_classes)
         return (img, label)
-    return dataset.map(pre_pro_training).shuffle(config.SHUFFLE_BUFFER_SIZE).batch(config.BATCH_SIZE)
+    return dataset.map(pre_pro_training)
 
 def unlabelled_set_creation(data):
     def pre_pro_unlabelled(file_path):
@@ -208,12 +208,14 @@ def unlabelled_set_creation(data):
 def feed_test_data(data, labels_list):
     num_classes = len(labels_list)
     test_set = dataset_set_creation(data, num_classes=num_classes)
+    test_set = test_set.batch(config.BATCH_SIZE)
     test_queue.put(test_set)
 
 
 def feed_training_data(data, labels_list):
     num_classes = len(labels_list)
     train_set = dataset_set_creation(data, num_classes=num_classes)
+    train_set = train_set.shuffle(config.SHUFFLE_BUFFER_SIZE).batch(config.BATCH_SIZE)
     train_queue.put(train_set)
 
 def feed_query_data(data):
